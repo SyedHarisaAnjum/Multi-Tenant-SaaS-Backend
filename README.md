@@ -52,6 +52,23 @@ Run from `backend/`:
 | POST | `/api/v1/auth/logout` | refresh cookie → revokes the session |
 | GET | `/api/v1/auth/me` | `Authorization: Bearer <access token>` |
 
+All endpoints below need a bearer token. `{org}` = organization id. Non-members get **404**.
+
+| Method | Path | Who |
+| --- | --- | --- |
+| POST | `/api/v1/organizations` | any user → becomes owner |
+| GET | `/api/v1/organizations` | your organizations, with your role |
+| GET | `/api/v1/organizations/{org}` | any member |
+| PATCH | `/api/v1/organizations/{org}` | owner, admin |
+| GET | `/api/v1/organizations/{org}/members` | any member |
+| PATCH | `/api/v1/organizations/{org}/members/{user_id}` | owner, admin (only for roles below their own) |
+| DELETE | `/api/v1/organizations/{org}/members/{user_id}` | owner, admin; or yourself (leave) |
+| POST | `/api/v1/organizations/{org}/transfer-ownership` | owner |
+| POST | `/api/v1/organizations/{org}/invitations` | owner, admin → returns the token once |
+| GET | `/api/v1/organizations/{org}/invitations` | owner, admin (pending only) |
+| DELETE | `/api/v1/organizations/{org}/invitations/{id}` | owner, admin (revoke) |
+| POST | `/api/v1/invitations/accept` | the invited email's account |
+
 ## Docs
 
 - [Architecture](docs/architecture.md)

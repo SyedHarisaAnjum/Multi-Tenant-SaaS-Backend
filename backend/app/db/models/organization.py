@@ -1,10 +1,10 @@
 import enum
 import uuid
 
-from sqlalchemy import Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, str_enum
 
 
 class MembershipRole(str, enum.Enum):
@@ -12,6 +12,21 @@ class MembershipRole(str, enum.Enum):
     ADMIN = "admin"
     MEMBER = "member"
     VIEWER = "viewer"
+
+    @property
+    def rank(self) -> int:
+        return _ROLE_RANK[self]
+
+    def outranks(self, other: "MembershipRole") -> bool:
+        return self.rank > other.rank
+
+
+_ROLE_RANK = {
+    MembershipRole.OWNER: 3,
+    MembershipRole.ADMIN: 2,
+    MembershipRole.MEMBER: 1,
+    MembershipRole.VIEWER: 0,
+}
 
 
 class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -23,7 +38,16 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Membership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "memberships"
-    __table_args__ = (UniqueConstraint("organization_id", "user_id"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "user_id"),
+        # Exactly one owner per organization; ownership moves only via transfer.
+        Index(
+            "uq_memberships_one_owner_per_org",
+            "organization_id",
+            unique=True,
+            postgresql_where=text("role = 'owner'"),
+        ),
+    )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
@@ -34,14 +58,7 @@ class Membership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[MembershipRole] = mapped_column(
-        Enum(
-            MembershipRole,
-            name="membership_role",
-            native_enum=False,
-            create_constraint=True,
-            length=20,
-            values_callable=lambda e: [m.value for m in e],
-        ),
+        str_enum(MembershipRole, "membership_role"),
         nullable=False,
         default=MembershipRole.MEMBER,
     )

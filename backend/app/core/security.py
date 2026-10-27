@@ -70,12 +70,12 @@ def decode_access_token(token: str) -> uuid.UUID:
         raise InvalidTokenError(str(exc)) from exc
 
 
-def generate_refresh_token() -> str:
-    """Opaque, high-entropy token. Only its hash is stored server-side."""
+def generate_opaque_token() -> str:
+    """Opaque, high-entropy token (refresh tokens, invitations). Only its hash is stored."""
     return secrets.token_urlsafe(48)
 
 
-def hash_refresh_token(token: str) -> str:
+def hash_opaque_token(token: str) -> str:
     # The token is random with 384 bits of entropy, so a fast hash is enough;
     # a slow KDF would only matter for low-entropy secrets like passwords.
     return hashlib.sha256(token.encode()).hexdigest()

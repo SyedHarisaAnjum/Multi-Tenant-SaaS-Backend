@@ -83,8 +83,8 @@ def test_token_with_wrong_type_is_rejected() -> None:
 
 
 def test_refresh_tokens_are_random_and_hash_deterministically() -> None:
-    a, b = security.generate_refresh_token(), security.generate_refresh_token()
+    a, b = security.generate_opaque_token(), security.generate_opaque_token()
     assert a != b
     assert len(a) >= 64
-    assert security.hash_refresh_token(a) == security.hash_refresh_token(a)
-    assert security.hash_refresh_token(a) != a
+    assert security.hash_opaque_token(a) == security.hash_opaque_token(a)
+    assert security.hash_opaque_token(a) != a

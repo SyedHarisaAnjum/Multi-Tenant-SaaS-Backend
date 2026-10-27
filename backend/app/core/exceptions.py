@@ -18,9 +18,26 @@ class AuthenticationError(AppError):
     headers = {"WWW-Authenticate": "Bearer"}
 
 
+class PermissionDeniedError(AppError):
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "forbidden"
+
+
+class NotFoundError(AppError):
+    """Also used for resources the caller may not see, so their existence isn't revealed."""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    code = "not_found"
+
+
 class ConflictError(AppError):
     status_code = status.HTTP_409_CONFLICT
     code = "conflict"
+
+
+class GoneError(AppError):
+    status_code = status.HTTP_410_GONE
+    code = "gone"
 
 
 async def app_error_handler(_: Request, exc: Exception) -> JSONResponse:

@@ -2,10 +2,10 @@ import enum
 import uuid
 from datetime import date
 
-from sqlalchemy import Date, Enum, ForeignKey, ForeignKeyConstraint, Index, String, Text
+from sqlalchemy import Date, ForeignKey, ForeignKeyConstraint, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, str_enum
 
 
 class TaskStatus(str, enum.Enum):
@@ -19,17 +19,6 @@ class TaskPriority(str, enum.Enum):
     MEDIUM = "medium"
     HIGH = "high"
     URGENT = "urgent"
-
-
-def _str_enum(enum_cls: type[enum.Enum], name: str) -> Enum:
-    return Enum(
-        enum_cls,
-        name=name,
-        native_enum=False,
-        create_constraint=True,
-        length=20,
-        values_callable=lambda e: [m.value for m in e],
-    )
 
 
 class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -54,10 +43,10 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[TaskStatus] = mapped_column(
-        _str_enum(TaskStatus, "task_status"), nullable=False, default=TaskStatus.TODO
+        str_enum(TaskStatus, "task_status"), nullable=False, default=TaskStatus.TODO
     )
     priority: Mapped[TaskPriority] = mapped_column(
-        _str_enum(TaskPriority, "task_priority"), nullable=False, default=TaskPriority.MEDIUM
+        str_enum(TaskPriority, "task_priority"), nullable=False, default=TaskPriority.MEDIUM
     )
     assignee_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")

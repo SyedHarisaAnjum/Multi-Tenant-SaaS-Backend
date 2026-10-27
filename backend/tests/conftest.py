@@ -1,5 +1,7 @@
 import os
+import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -17,13 +19,20 @@ get_settings.cache_clear()
 
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
+from argon2 import PasswordHasher  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from app.core import security  # noqa: E402
 from app.db.session import engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from tests.helpers import Actor, add_member, create_actor, create_org  # noqa: E402
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+# Production Argon2 parameters are deliberately slow; tests hash dozens of passwords.
+# Still Argon2id, just cheap. (The hash encodes its own parameters, so verify works either way.)
+security._password_hasher = PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -64,3 +73,33 @@ def client(db: Session) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@dataclass(frozen=True)
+class Tenants:
+    """Two organizations. Acme has one user per role; Globex is owned by Mallory."""
+
+    acme: uuid.UUID
+    owner: Actor
+    admin: Actor
+    member: Actor
+    viewer: Actor
+    globex: uuid.UUID
+    mallory: Actor
+
+
+@pytest.fixture
+def tenants(client: TestClient) -> Tenants:
+    owner = create_actor(client, "owner@acme.com")
+    admin = create_actor(client, "admin@acme.com")
+    member = create_actor(client, "member@acme.com")
+    viewer = create_actor(client, "viewer@acme.com")
+    mallory = create_actor(client, "mallory@globex.com")
+
+    acme = create_org(client, owner, "acme")
+    add_member(client, owner, acme, admin, "admin")
+    add_member(client, owner, acme, member, "member")
+    add_member(client, owner, acme, viewer, "viewer")
+    globex = create_org(client, mallory, "globex")
+
+    return Tenants(acme, owner, admin, member, viewer, globex, mallory)

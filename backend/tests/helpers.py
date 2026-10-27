@@ -1,3 +1,6 @@
+import uuid
+from dataclasses import dataclass
+
 from fastapi.testclient import TestClient
 from httpx import Response
 
@@ -32,3 +35,49 @@ def post_with_refresh_token(client: TestClient, path: str, token: str) -> Respon
 
 def auth_header(access_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {access_token}"}
+
+
+@dataclass(frozen=True)
+class Actor:
+    id: uuid.UUID
+    email: str
+    headers: dict[str, str]
+
+
+def create_actor(client: TestClient, email: str) -> Actor:
+    """Register and log in a user; returns their id and bearer headers."""
+    response = register(client, email=email)
+    assert response.status_code == 201, response.text
+    token = login(client, email=email).json()["access_token"]
+    return Actor(id=uuid.UUID(response.json()["id"]), email=email, headers=auth_header(token))
+
+
+def create_org(client: TestClient, owner: Actor, slug: str) -> uuid.UUID:
+    response = client.post(
+        "/api/v1/organizations", json={"name": slug.title(), "slug": slug}, headers=owner.headers
+    )
+    assert response.status_code == 201, response.text
+    return uuid.UUID(response.json()["id"])
+
+
+def invite(
+    client: TestClient, inviter: Actor, org_id: uuid.UUID, email: str, role: str = "member"
+) -> Response:
+    return client.post(
+        f"/api/v1/organizations/{org_id}/invitations",
+        json={"email": email, "role": role},
+        headers=inviter.headers,
+    )
+
+
+def accept(client: TestClient, actor: Actor, token: str) -> Response:
+    return client.post("/api/v1/invitations/accept", json={"token": token}, headers=actor.headers)
+
+
+def add_member(
+    client: TestClient, inviter: Actor, org_id: uuid.UUID, member: Actor, role: str
+) -> None:
+    created = invite(client, inviter, org_id, member.email, role)
+    assert created.status_code == 201, created.text
+    accepted = accept(client, member, created.json()["token"])
+    assert accepted.status_code == 200, accepted.text

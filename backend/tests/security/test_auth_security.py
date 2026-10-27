@@ -63,7 +63,7 @@ def test_refresh_tokens_are_stored_only_as_hashes(client: TestClient, db: Sessio
     raw = refresh_cookie(login(client))
     stored = db.scalars(select(RefreshToken.token_hash)).all()
     assert raw not in stored
-    assert security.hash_refresh_token(raw) in stored
+    assert security.hash_opaque_token(raw) in stored
 
 
 def test_refresh_token_reuse_revokes_whole_session(client: TestClient) -> None:
@@ -92,7 +92,7 @@ def test_expired_refresh_token_is_rejected(client: TestClient, db: Session) -> N
     register(client)
     raw = refresh_cookie(login(client))
     stored = db.scalar(
-        select(RefreshToken).where(RefreshToken.token_hash == security.hash_refresh_token(raw))
+        select(RefreshToken).where(RefreshToken.token_hash == security.hash_opaque_token(raw))
     )
     assert stored is not None
     stored.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
@@ -102,6 +102,6 @@ def test_expired_refresh_token_is_rejected(client: TestClient, db: Session) -> N
 
 def test_forged_refresh_token_is_rejected(client: TestClient) -> None:
     response = post_with_refresh_token(
-        client, "/api/v1/auth/refresh", security.generate_refresh_token()
+        client, "/api/v1/auth/refresh", security.generate_opaque_token()
     )
     assert response.status_code == 401

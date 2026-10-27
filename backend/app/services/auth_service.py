@@ -66,7 +66,7 @@ class AuthService:
             raise AuthenticationError("Missing refresh token.")
         now = datetime.now(timezone.utc)
         stored = self.refresh_tokens.get_by_hash_for_update(
-            security.hash_refresh_token(raw_refresh_token)
+            security.hash_opaque_token(raw_refresh_token)
         )
         if stored is None:
             raise AuthenticationError("Invalid refresh token.")
@@ -102,7 +102,7 @@ class AuthService:
         if not raw_refresh_token:
             return
         stored = self.refresh_tokens.get_by_hash_for_update(
-            security.hash_refresh_token(raw_refresh_token)
+            security.hash_opaque_token(raw_refresh_token)
         )
         if stored is not None:
             self.refresh_tokens.revoke_family(stored.family_id, datetime.now(timezone.utc))
@@ -113,11 +113,11 @@ class AuthService:
     ) -> tuple[IssuedTokens, RefreshToken]:
         settings = get_settings()
         now = now or datetime.now(timezone.utc)
-        raw_refresh = security.generate_refresh_token()
+        raw_refresh = security.generate_opaque_token()
         record = self.refresh_tokens.add(
             RefreshToken(
                 user_id=user_id,
-                token_hash=security.hash_refresh_token(raw_refresh),
+                token_hash=security.hash_opaque_token(raw_refresh),
                 family_id=family_id,
                 expires_at=now + timedelta(days=settings.refresh_token_expire_days),
             )

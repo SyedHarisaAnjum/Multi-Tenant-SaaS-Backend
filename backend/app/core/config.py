@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_expire_minutes: int = Field(default=15, gt=0, le=60)
     refresh_token_expire_days: int = Field(default=7, gt=0, le=90)
+    invitation_expire_hours: int = Field(default=72, gt=0, le=24 * 30)
 
     cookie_secure: bool = True
     refresh_cookie_name: str = "refresh_token"
