@@ -1,0 +1,18 @@
+# TLS termination. Caddy obtains and renews the certificate for {$DOMAIN} on its own
+# (Let's Encrypt / ZeroSSL; for DOMAIN=localhost it uses a local self-signed CA).
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Caddy trusts no incoming X-Forwarded-For (no trusted_proxies configured) and sets it
+	# to the real client address, which nginx then passes on to the API.
+	reverse_proxy frontend:80
+}

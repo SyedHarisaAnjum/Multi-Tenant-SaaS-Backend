@@ -1,11 +1,16 @@
 name: teamflow
 
-# Full stack:   docker compose up --build        → http://localhost:8080
-# Infra only (backend/frontend run on the host for development):
-#               docker compose up -d db redis
+# This file alone is the production-safe base: nothing but the web entry point is
+# reachable from outside the Docker network.
+#
+# Local (base + docker-compose.override.yml, loaded automatically):
+#   docker compose up --build              → http://localhost:8080, Postgres :5433, Redis :6380
+#   docker compose up -d db redis          → infra only, for running backend/frontend on the host
+# Production (base + docker-compose.prod.yml, adds HTTPS):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Start-up order is gated on readiness, not just "container started":
-#   db healthy → migrate exits 0 → backend healthy (/health reaches the DB) → frontend
+#   db healthy → migrate exits 0 → backend healthy (/health/ready reaches the DB) → frontend
 
 x-backend-env: &backend-env
   ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -20,6 +25,21 @@ x-backend-env: &backend-env
   RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
   # Secure cookies need HTTPS. Plain-http local runs set COOKIE_SECURE=false in .env.
   COOKIE_SECURE: ${COOKIE_SECURE:-true}
+  LOG_FORMAT: ${LOG_FORMAT:-text}
+
+# Bounded logs: the default json-file driver grows until the disk is full.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# The app containers need no Linux capabilities and never write to their image.
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: [/tmp]
 
 services:
   db:
@@ -29,11 +49,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-teamflow}
-    ports:
-      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    security_opt: ["no-new-privileges:true"]
+    shm_size: 128mb
+    logging: *logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -45,8 +65,8 @@ services:
     restart: unless-stopped
     # Cache + rate-limit counters only: no persistence needed, bounded memory.
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru"]
-    ports:
-      - "${REDIS_PORT:-6380}:6379"
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -59,6 +79,8 @@ services:
     image: teamflow-backend:local
     command: ["alembic", "upgrade", "head"]
     environment: *backend-env
+    <<: *hardened
+    logging: *logging
     depends_on:
       db:
         condition: service_healthy
@@ -73,8 +95,13 @@ services:
       # Trust X-Forwarded-For from any peer: safe ONLY because this service publishes no
       # port, so nginx (which overwrites the header) is the only thing that can reach it.
       FORWARDED_ALLOW_IPS: "*"
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
     expose:
       - "8000"
+    <<: *hardened
+    logging: *logging
+    # Matches uvicorn's --timeout-graceful-shutdown, plus headroom.
+    stop_grace_period: 30s
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -87,8 +114,13 @@ services:
     build: ./frontend
     image: teamflow-frontend:local
     restart: unless-stopped
-    ports:
-      - "${FRONTEND_PORT:-8080}:80"
+    read_only: true
+    # nginx's master starts as root, binds :80, then drops to the nginx user.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+    logging: *logging
     depends_on:
       backend:
         condition: service_healthy

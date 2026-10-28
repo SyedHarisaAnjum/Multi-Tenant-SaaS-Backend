@@ -1,0 +1,78 @@
+# Production: HTTPS in front, production settings, Redis behind a password, resource limits.
+#
+#   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Only Caddy publishes ports (80 → redirect, 443 → TLS). It obtains and renews the
+# certificate for $DOMAIN automatically; the domain's DNS must point at this host.
+# See docs/deployment.md.
+
+x-prod-backend-env: &prod-backend-env
+  ENVIRONMENT: production
+  LOG_FORMAT: json
+  COOKIE_SECURE: "true"
+  RATE_LIMIT_ENABLED: "true"
+  # REDIS_PASSWORD must be URL-safe (e.g. secrets.token_hex(32)).
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379/0
+
+services:
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN (e.g. app.example.com)}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL for certificate expiry notices}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+    depends_on:
+      frontend:
+        condition: service_healthy
+
+  db:
+    deploy:
+      resources:
+        limits: { memory: 1g }
+
+  redis:
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    environment:
+      # Lets the healthcheck's plain `redis-cli ping` authenticate.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    deploy:
+      resources:
+        limits: { memory: 320m }
+
+  migrate:
+    environment: *prod-backend-env
+
+  backend:
+    environment:
+      <<: *prod-backend-env
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    deploy:
+      resources:
+        limits: { memory: 768m }
+
+  frontend:
+    # nginx now sits behind Caddy and still publishes no port, so its only client is
+    # the proxy: take the real client address from Caddy's X-Forwarded-For.
+    volumes:
+      - ./docker/nginx/trust-proxy.conf:/etc/nginx/conf.d/00-trust-proxy.conf:ro
+    deploy:
+      resources:
+        limits: { memory: 128m }
+
+volumes:
+  caddy_data:
+  caddy_config:

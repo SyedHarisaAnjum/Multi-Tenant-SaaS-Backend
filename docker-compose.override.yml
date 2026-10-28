@@ -1,0 +1,18 @@
+# Local development only. `docker compose up` loads this automatically on top of
+# docker-compose.yml. Production passes its files with -f, so it never sees these ports.
+
+services:
+  db:
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # Creates the teamflow_test database the host test suite uses (first start only).
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+
+  frontend:
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"

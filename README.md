@@ -16,7 +16,16 @@ docker compose up --build
 
 Open **http://localhost:8080**. API docs: http://localhost:8080/docs.
 
-Start-up is gated on readiness: PostgreSQL healthy → a one-off `migrate` container runs `alembic upgrade head` and exits → backend healthy (its `/health` reaches the DB) → nginx frontend. The backend has no published port; nginx serves the React app and proxies `/api` on the same origin. For plain-http local use, `.env` sets `COOKIE_SECURE=false`. Keep it `true` behind HTTPS.
+Start-up is gated on readiness: PostgreSQL healthy → a one-off `migrate` container runs `alembic upgrade head` and exits → backend healthy (its `/health/ready` reaches the DB) → nginx frontend. The backend has no published port; nginx serves the React app and proxies `/api` on the same origin. For plain-http local use, `.env` sets `COOKIE_SECURE=false`. Keep it `true` behind HTTPS.
+
+## Deploy to production
+
+```bash
+cp .env.production.example .env.production      # set DOMAIN, ACME_EMAIL and the secrets
+docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build --wait
+```
+
+This adds automatic HTTPS (Caddy), JSON logs, hidden API docs, a password-protected Redis and resource limits. If you start it with unsafe settings, it refuses to boot. Plain `docker compose up` is the local setup; it also loads `docker-compose.override.yml`, which publishes Postgres, Redis and the UI on localhost. See **[docs/deployment.md](docs/deployment.md)** for upgrades, backups, monitoring and scaling.
 
 ## Develop on the host
 
@@ -125,3 +134,4 @@ Validation errors add `details: [{field, message, type}]`. Submitted values are 
 - [Architecture](docs/architecture.md)
 - [Database schema](docs/database-schema.md)
 - [Security](docs/security.md)
+- [Deployment](docs/deployment.md)

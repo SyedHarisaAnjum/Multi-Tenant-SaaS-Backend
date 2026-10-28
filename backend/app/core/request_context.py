@@ -53,10 +53,14 @@ class RequestIdMiddleware:
         try:
             await self.app(scope, receive, send_with_request_id)
         finally:
+            # The client address as resolved by uvicorn from trusted proxy headers: the
+            # same value per-IP rate limits use.
+            client = scope.get("client")
             access_logger.info(
-                "%s %s -> %s (%.1f ms)",
+                "%s %s -> %s (%.1f ms) client=%s",
                 scope["method"],
                 scope["path"],
                 status_code,
                 (time.perf_counter() - started) * 1000,
+                client[0] if client else "-",
             )

@@ -79,6 +79,14 @@ See [architecture.md](architecture.md#rate-limiting-appcorerate_limitpy). Limits
 - `?next=` after login only accepts same-app paths (no open redirect).
 - nginx: CSP `default-src 'self'` (no inline scripts), `X-Frame-Options: DENY`, `nosniff`, a strict referrer policy and `server_tokens off`. It overwrites `X-Forwarded-For`, and the backend is not reachable except through nginx.
 
+## Production hardening
+
+- **Unsafe production settings stop the app at start-up:** `COOKIE_SECURE=false`, a short or placeholder JWT secret (production needs 64+ characters), or rate limiting turned off. Config errors never print input values.
+- **API docs and the OpenAPI schema are off in production** (`DOCS_ENABLED` can override this).
+- **TLS:** Caddy terminates it, sends HSTS (1 year) and redirects HTTP. Only Caddy publishes ports. PostgreSQL and Redis are reachable only on the internal Docker network, and Redis also requires a password.
+- **Containers:** they run as non-root where possible, with a read-only root filesystem, `cap_drop: ALL` (nginx keeps only what it needs to bind :80 and drop privileges), `no-new-privileges`, and memory limits.
+- **Python dependencies are pinned in `requirements.lock`,** so every image build installs exactly the versions CI tested. Dependabot tracks npm packages, base images and Actions; regenerate the Python lock deliberately.
+
 ### Known limitations / TODO
 
 - Access tokens stay valid until expiry after logout (≤15 min). Add a deny-list only if needed.
@@ -86,4 +94,5 @@ See [architecture.md](architecture.md#rate-limiting-appcorerate_limitpy). Limits
 - Per-account login limits let an attacker lock a known account out for 15 minutes (the usual trade-off). Consider CAPTCHA or step-up checks instead of hard blocks later.
 - **No email verification yet.** Invitation acceptance trusts the account's email, so someone could register an invitee's address first. They would still need the invitation token, which is sent to that inbox. Add email verification before relying on this in production.
 - Set `COOKIE_SECURE=true` (the default) everywhere except local http development.
-- Configure CORS explicitly when the frontend is added (credentials + an exact allowed origin).
+- The SPA and API share one origin, so there is no CORS. If the frontend ever moves to another origin, allow exactly that origin with credentials.
+- **Email verification** must be added before production, together with email delivery (the planned worker).

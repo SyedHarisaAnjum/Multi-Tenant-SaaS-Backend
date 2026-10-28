@@ -105,17 +105,36 @@ React 19 + TypeScript (strict) + Vite, React Router for routing and TanStack Que
 - **Optimistic locking in the UI:** edit forms send only changed fields plus `version`. A `VERSION_CONFLICT` offers "Load latest version" instead of overwriting.
 - Every data view has loading, empty and error states. Errors show the server's message and request id.
 
-## Containers (`docker-compose.yml`)
+## Containers (`docker-compose*.yml`)
 
 | Service | Image | Readiness |
 | --- | --- | --- |
 | db | postgres:17-alpine, named volume `pgdata` | `pg_isready` |
 | redis | redis:7.4-alpine (no persistence, 128 MB cap) | `redis-cli ping` |
 | migrate | backend image, `alembic upgrade head`, exits | backend waits for `service_completed_successfully` |
-| backend | python:3.12-slim, non-root, no published port | `/health` (includes a DB round-trip) |
-| frontend | nginx serving the built SPA, proxying `/api`, `/health`, `/docs` | `/healthz` |
+| backend | python:3.12-slim, deps pinned by `requirements.lock`, non-root, read-only root FS, no capabilities, no published port | `/health/ready` (DB round-trip); `/health/live` has no dependencies |
+| frontend | nginx serving the built SPA, proxying `/api`, `/health*`, `/docs` | `/healthz` |
+| proxy (prod only) | Caddy: TLS with automatic certificates, HSTS, HTTP→HTTPS | — |
 
-Images contain no secrets. Everything comes from environment variables at runtime (`JWT_SECRET_KEY` is required, and compose refuses to start without it). nginx overwrites `X-Forwarded-For` with the real peer address, and only then does the backend trust it (`FORWARDED_ALLOW_IPS=*` is safe solely because nginx is the only route to the backend). The SPA is served with a strict Content-Security-Policy, and fingerprinted assets are cached as immutable.
+Images contain no secrets. Everything comes from environment variables at runtime (`JWT_SECRET_KEY` is required, and compose refuses to start without it). nginx overwrites `X-Forwarded-For` with the real peer address, and only then does the backend trust it (`FORWARDED_ALLOW_IPS=*` is safe solely because nginx is the only route to the backend). The SPA is served with a strict Content-Security-Policy, and fingerprinted assets are cached as immutable; API responses are `Cache-Control: no-store`.
+
+The three compose files have separate roles:
+
+- `docker-compose.yml` is the production-safe base. It publishes nothing except through a proxy, and it sets read-only containers, dropped capabilities, `no-new-privileges` and rotated logs.
+- `docker-compose.override.yml` is for local development and is loaded automatically. It publishes Postgres on :5433, Redis on :6380 and the UI on :8080, and it creates the test database.
+- `docker-compose.prod.yml` adds Caddy and production settings. Because nginx then sits behind Caddy, it mounts `docker/nginx/trust-proxy.conf`, which takes the client address from Caddy's `X-Forwarded-For`. Without it, every user would share Caddy's address in the per-IP rate limits.
+
+The full chain was verified end to end: the backend logs the real client IP, and a spoofed `X-Forwarded-For` is ignored.
+
+**Runtime settings.** The DB pool is bounded (`DB_POOL_SIZE`, `DB_MAX_OVERFLOW`) and connections are recycled. Every connection gets a `statement_timeout` (15 s by default), so a runaway query can't hold locks forever. uvicorn runs `WEB_CONCURRENCY` workers and drains in-flight requests for up to 20 s on SIGTERM.
+
+**CI** (`.github/workflows/ci.yml`) runs these jobs:
+
+- Backend: ruff, ruff format, mypy, the full test suite with coverage, and `alembic check`, on Python 3.12 with the locked dependency versions, against real Postgres and Redis services.
+- Frontend: typecheck, build and `npm audit`.
+- Both Docker images are built, and the production compose file is validated.
+
+Dependabot keeps npm packages, base images and Actions current.
 
 ## Testing
 
