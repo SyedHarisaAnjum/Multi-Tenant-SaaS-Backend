@@ -32,7 +32,7 @@ class AuthService:
 
     def register(self, data: RegisterRequest) -> User:
         if self.users.get_by_email(data.email):
-            raise ConflictError("An account with this email already exists.")
+            raise ConflictError("An account with this email already exists.", code="EMAIL_TAKEN")
         user = User(
             email=data.email,
             password_hash=security.hash_password(data.password),
@@ -44,7 +44,9 @@ class AuthService:
         except IntegrityError:
             # Lost a race with a concurrent registration for the same email.
             self.db.rollback()
-            raise ConflictError("An account with this email already exists.") from None
+            raise ConflictError(
+                "An account with this email already exists.", code="EMAIL_TAKEN"
+            ) from None
         return user
 
     def login(self, data: LoginRequest) -> IssuedTokens:
@@ -52,7 +54,7 @@ class AuthService:
         # Always run verification, even for unknown emails, to keep timing uniform.
         password_ok = security.verify_password(data.password, user.password_hash if user else None)
         if user is None or not password_ok or not user.is_active:
-            raise AuthenticationError("Invalid email or password.")
+            raise AuthenticationError("Invalid email or password.", code="INVALID_CREDENTIALS")
 
         if security.password_needs_rehash(user.password_hash):
             user.password_hash = security.hash_password(data.password)
@@ -63,13 +65,13 @@ class AuthService:
 
     def refresh(self, raw_refresh_token: str | None) -> IssuedTokens:
         if not raw_refresh_token:
-            raise AuthenticationError("Missing refresh token.")
+            raise AuthenticationError("Missing refresh token.", code="INVALID_REFRESH_TOKEN")
         now = datetime.now(timezone.utc)
         stored = self.refresh_tokens.get_by_hash_for_update(
             security.hash_opaque_token(raw_refresh_token)
         )
         if stored is None:
-            raise AuthenticationError("Invalid refresh token.")
+            raise AuthenticationError("Invalid refresh token.", code="INVALID_REFRESH_TOKEN")
 
         if stored.revoked_at is not None:
             # A rotated-out token was replayed: assume it was stolen and kill the session.
@@ -80,16 +82,16 @@ class AuthService:
             )
             self.refresh_tokens.revoke_family(stored.family_id, now)
             self.db.commit()
-            raise AuthenticationError("Invalid refresh token.")
+            raise AuthenticationError("Invalid refresh token.", code="INVALID_REFRESH_TOKEN")
 
         if stored.expires_at <= now:
-            raise AuthenticationError("Refresh token expired.")
+            raise AuthenticationError("Refresh token expired.", code="INVALID_REFRESH_TOKEN")
 
         user = self.users.get(stored.user_id)
         if user is None or not user.is_active:
             self.refresh_tokens.revoke_family(stored.family_id, now)
             self.db.commit()
-            raise AuthenticationError("Invalid refresh token.")
+            raise AuthenticationError("Invalid refresh token.", code="INVALID_REFRESH_TOKEN")
 
         tokens, successor = self._issue_tokens(user.id, family_id=stored.family_id, now=now)
         stored.revoked_at = now

@@ -21,7 +21,7 @@ class OrganizationService:
     def create(self, creator: User, data: OrganizationCreate) -> tuple[Organization, Membership]:
         """Create the organization and the creator's owner membership atomically."""
         if self.organizations.get_by_slug(data.slug):
-            raise ConflictError(_SLUG_TAKEN)
+            raise ConflictError(_SLUG_TAKEN, code="SLUG_TAKEN")
         try:
             organization = self.organizations.add(Organization(name=data.name, slug=data.slug))
             membership = self.memberships.add(
@@ -42,7 +42,7 @@ class OrganizationService:
         except IntegrityError:
             # Lost a race for the slug.
             self.db.rollback()
-            raise ConflictError(_SLUG_TAKEN) from None
+            raise ConflictError(_SLUG_TAKEN, code="SLUG_TAKEN") from None
         except Exception:
             # Neither the organization nor the membership may survive alone.
             self.db.rollback()
@@ -52,12 +52,12 @@ class OrganizationService:
     def update(self, actor: Membership, data: OrganizationUpdate) -> Organization:
         organization = self.organizations.get(actor.organization_id)
         if organization is None:
-            raise NotFoundError("Organization not found.")
+            raise NotFoundError("Organization not found.", code="ORGANIZATION_NOT_FOUND")
 
         changes = data.model_dump(exclude_unset=True, exclude_none=True)
         new_slug = changes.get("slug")
         if new_slug and new_slug != organization.slug and self.organizations.get_by_slug(new_slug):
-            raise ConflictError(_SLUG_TAKEN)
+            raise ConflictError(_SLUG_TAKEN, code="SLUG_TAKEN")
         changes = {k: v for k, v in changes.items() if getattr(organization, k) != v}
         if not changes:
             return organization
@@ -76,6 +76,6 @@ class OrganizationService:
             self.db.commit()
         except IntegrityError:
             self.db.rollback()
-            raise ConflictError(_SLUG_TAKEN) from None
+            raise ConflictError(_SLUG_TAKEN, code="SLUG_TAKEN") from None
         self.db.refresh(organization)
         return organization

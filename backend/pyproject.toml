@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "argon2-cffi>=23.1",
     "pyjwt>=2.9",
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +42,7 @@ ignore = ["B008"]  # FastAPI's Depends()/Cookie() in defaults is idiomatic
 known-third-party = ["alembic"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106"]
+"tests/**" = ["S101", "S105", "S106", "S107"]
 "alembic/**" = ["E501"]
 
 [tool.mypy]

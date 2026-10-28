@@ -11,4 +11,10 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 def get_db() -> Iterator[Session]:
     with SessionLocal() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            # Any failure mid-request discards partial work (e.g. a half-done
+            # ownership transfer) before the error response is produced.
+            session.rollback()
+            raise

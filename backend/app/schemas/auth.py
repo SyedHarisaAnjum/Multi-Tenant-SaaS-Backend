@@ -4,6 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
+from app.schemas.common import RequestModel
+
 
 def normalize_email(email: str) -> str:
     """Single canonical form for every email we store or look up."""
@@ -16,13 +18,13 @@ NormalizedEmail = Annotated[EmailStr, AfterValidator(normalize_email)]
 Password = Annotated[str, Field(min_length=12, max_length=128)]
 
 
-class RegisterRequest(BaseModel):
+class RegisterRequest(RequestModel):
     email: NormalizedEmail
     password: Password
     full_name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(RequestModel):
     email: NormalizedEmail
     # Don't enforce the registration policy on login: it would leak the policy
     # and reject accounts created under an older one.

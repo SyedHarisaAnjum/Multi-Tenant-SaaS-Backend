@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -81,3 +82,44 @@ def add_member(
     assert created.status_code == 201, created.text
     accepted = accept(client, member, created.json()["token"])
     assert accepted.status_code == 200, accepted.text
+
+
+def create_workspace(
+    client: TestClient, actor: Actor, org_id: uuid.UUID, slug: str
+) -> dict[str, Any]:
+    response = client.post(
+        f"/api/v1/organizations/{org_id}/workspaces",
+        json={"name": slug.replace("-", " ").title(), "slug": slug},
+        headers=actor.headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()  # type: ignore[no-any-return]
+
+
+def create_project(
+    client: TestClient,
+    actor: Actor,
+    org_id: uuid.UUID,
+    workspace_id: str,
+    name: str,
+    **fields: Any,
+) -> dict[str, Any]:
+    response = client.post(
+        f"/api/v1/organizations/{org_id}/projects",
+        json={"workspace_id": workspace_id, "name": name, **fields},
+        headers=actor.headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()  # type: ignore[no-any-return]
+
+
+def create_task(
+    client: TestClient, actor: Actor, project_id: str, title: str, **fields: Any
+) -> dict[str, Any]:
+    response = client.post(
+        f"/api/v1/projects/{project_id}/tasks",
+        json={"title": title, **fields},
+        headers=actor.headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()  # type: ignore[no-any-return]

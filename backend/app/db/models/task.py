@@ -11,6 +11,7 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, str_enum
 class TaskStatus(str, enum.Enum):
     TODO = "todo"
     IN_PROGRESS = "in_progress"
+    IN_REVIEW = "in_review"
     DONE = "done"
 
 
@@ -33,7 +34,22 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index(
             "ix_tasks_organization_id_project_id_status", "organization_id", "project_id", "status"
         ),
+        # "Tasks assigned to X in this organization" listing.
+        Index(
+            "ix_tasks_organization_id_assignee_id_status",
+            "organization_id",
+            "assignee_id",
+            "status",
+        ),
+        # Single-column FK indexes keep ON DELETE SET NULL cheap when a user is deleted.
         Index("ix_tasks_assignee_id", "assignee_id"),
+        Index("ix_tasks_created_by_id", "created_by_id"),
+        Index(
+            "ix_tasks_title_trgm",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"},
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -55,3 +71,6 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
     due_date: Mapped[date | None] = mapped_column(Date)
+    version: Mapped[int] = mapped_column(nullable=False, server_default="1")
+
+    __mapper_args__ = {"version_id_col": version}

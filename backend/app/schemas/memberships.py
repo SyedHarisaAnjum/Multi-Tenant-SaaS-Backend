@@ -5,6 +5,7 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel
 
 from app.db.models import MembershipRole
+from app.schemas.common import RequestModel
 
 
 def _not_owner(role: MembershipRole) -> MembershipRole:
@@ -25,9 +26,9 @@ class MemberRead(BaseModel):
     joined_at: datetime
 
 
-class MemberRoleUpdate(BaseModel):
+class MemberRoleUpdate(RequestModel):
     role: AssignableRole
 
 
-class OwnershipTransfer(BaseModel):
+class OwnershipTransfer(RequestModel):
     user_id: uuid.UUID

@@ -9,6 +9,7 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.request_context import RequestIdMiddleware
 from app.dependencies.auth import DbSession
 
 configure_logging()
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title=get_settings().app_name)
 register_exception_handlers(app)
+app.add_middleware(RequestIdMiddleware)
 app.include_router(api_router)
 
 

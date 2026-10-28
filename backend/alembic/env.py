@@ -10,7 +10,8 @@ from app.db.base import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers created before migrations ran (e.g. the app's, when run in-process).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # A caller (e.g. the test suite) may set the URL explicitly; otherwise use app settings.
 if not config.get_main_option("sqlalchemy.url"):

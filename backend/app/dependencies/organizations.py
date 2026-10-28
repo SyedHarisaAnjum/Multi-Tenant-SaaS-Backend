@@ -24,7 +24,7 @@ def get_current_membership(
     membership = MembershipRepository(db).get(organization_id, user.id)
     if membership is None:
         # 404, not 403: outsiders can't tell whether the organization exists.
-        raise NotFoundError("Organization not found.")
+        raise NotFoundError("Organization not found.", code="ORGANIZATION_NOT_FOUND")
     return membership
 
 

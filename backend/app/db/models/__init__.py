@@ -3,7 +3,7 @@
 from app.db.models.activity_log import ActivityLog
 from app.db.models.invitation import Invitation
 from app.db.models.organization import Membership, MembershipRole, Organization
-from app.db.models.project import Project
+from app.db.models.project import Project, ProjectStatus
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.task import Task, TaskPriority, TaskStatus
 from app.db.models.user import User
@@ -16,6 +16,7 @@ __all__ = [
     "MembershipRole",
     "Organization",
     "Project",
+    "ProjectStatus",
     "RefreshToken",
     "Task",
     "TaskPriority",

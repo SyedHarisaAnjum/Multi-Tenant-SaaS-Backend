@@ -37,7 +37,7 @@ def test_register_duplicate_email_is_case_insensitive(client: TestClient) -> Non
     assert register(client, email="bob@example.com").status_code == 201
     response = register(client, email="BOB@example.com")
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "conflict"
+    assert response.json()["error"]["code"] == "EMAIL_TAKEN"
 
 
 def test_register_rejects_weak_password(client: TestClient) -> None:
@@ -72,7 +72,8 @@ def test_login_with_unknown_email_gives_same_error(client: TestClient) -> None:
     wrong_password = login(client, password="not the right password")
     unknown_user = login(client, email="nobody@example.com")
     assert unknown_user.status_code == 401
-    assert unknown_user.json() == wrong_password.json()
+    strip = lambda r: {k: v for k, v in r.json()["error"].items() if k != "request_id"}  # noqa: E731
+    assert strip(unknown_user) == strip(wrong_password)
 
 
 def test_me_returns_current_user(client: TestClient) -> None:

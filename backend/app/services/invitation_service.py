@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core import security
+from app.core import cache, security
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError, GoneError, NotFoundError, PermissionDeniedError
 from app.core.permissions import ensure_can_manage
@@ -31,7 +31,9 @@ class InvitationService:
 
         invitee = UserRepository(self.db).get_by_email(data.email)
         if invitee and self.memberships.get(organization_id, invitee.id):
-            raise ConflictError("This user is already a member of the organization.")
+            raise ConflictError(
+                "This user is already a member of the organization.", code="ALREADY_MEMBER"
+            )
 
         now = datetime.now(timezone.utc)
         # Re-inviting replaces the previous link, so only the newest one works.
@@ -69,9 +71,11 @@ class InvitationService:
     def revoke(self, actor: Membership, invitation_id: uuid.UUID) -> None:
         invitation = self.invitations.get_in_org_for_update(actor.organization_id, invitation_id)
         if invitation is None:
-            raise NotFoundError("Invitation not found.")
+            raise NotFoundError("Invitation not found.", code="INVITATION_NOT_FOUND")
         if invitation.accepted_at is not None or invitation.revoked_at is not None:
-            raise ConflictError("This invitation is no longer pending.")
+            raise ConflictError(
+                "This invitation is no longer pending.", code="INVITATION_NOT_PENDING"
+            )
         ensure_can_manage(actor, invitation.role)
 
         invitation.revoked_at = datetime.now(timezone.utc)
@@ -87,22 +91,29 @@ class InvitationService:
     def accept(self, user: User, raw_token: str) -> tuple[Organization, Membership]:
         invitation = self.invitations.get_by_hash_for_update(security.hash_opaque_token(raw_token))
         if invitation is None:
-            raise NotFoundError("Invitation not found.")
+            raise NotFoundError("Invitation not found.", code="INVITATION_NOT_FOUND")
         # Check identity before revealing anything about the invitation's state.
         if invitation.email != user.email:
-            raise PermissionDeniedError("This invitation was sent to a different email address.")
+            raise PermissionDeniedError(
+                "This invitation was sent to a different email address.",
+                code="INVITATION_EMAIL_MISMATCH",
+            )
         if invitation.revoked_at is not None:
-            raise GoneError("This invitation has been revoked.")
+            raise GoneError("This invitation has been revoked.", code="INVITATION_REVOKED")
         if invitation.accepted_at is not None:
-            raise GoneError("This invitation has already been used.")
+            raise GoneError(
+                "This invitation has already been used.", code="INVITATION_ALREADY_USED"
+            )
         now = datetime.now(timezone.utc)
         if invitation.expires_at <= now:
-            raise GoneError("This invitation has expired.")
+            raise GoneError("This invitation has expired.", code="INVITATION_EXPIRED")
         if self.memberships.get(invitation.organization_id, user.id):
-            raise ConflictError("You are already a member of this organization.")
+            raise ConflictError(
+                "You are already a member of this organization.", code="ALREADY_MEMBER"
+            )
         organization = OrganizationRepository(self.db).get(invitation.organization_id)
         if organization is None:
-            raise NotFoundError("Invitation not found.")
+            raise NotFoundError("Invitation not found.", code="INVITATION_NOT_FOUND")
 
         try:
             membership = self.memberships.add(
@@ -115,7 +126,9 @@ class InvitationService:
         except IntegrityError:
             # Joined concurrently through another invitation.
             self.db.rollback()
-            raise ConflictError("You are already a member of this organization.") from None
+            raise ConflictError(
+                "You are already a member of this organization.", code="ALREADY_MEMBER"
+            ) from None
         invitation.accepted_at = now
         invitation.accepted_by_id = user.id
         self.activity.record(
@@ -127,4 +140,5 @@ class InvitationService:
             details={"role": invitation.role.value},
         )
         self.db.commit()
+        cache.get_cache().invalidate(organization.id, cache.SUMMARY)
         return organization, membership

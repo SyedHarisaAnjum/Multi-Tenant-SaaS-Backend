@@ -6,10 +6,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.models import MembershipRole
 from app.schemas.auth import NormalizedEmail
+from app.schemas.common import RequestModel
 from app.schemas.memberships import AssignableRole
 
 
-class InvitationCreate(BaseModel):
+class InvitationCreate(RequestModel):
     email: NormalizedEmail
     role: AssignableRole = MembershipRole.MEMBER
 
@@ -32,5 +33,5 @@ class InvitationCreated(InvitationRead):
     token: str
 
 
-class InvitationAccept(BaseModel):
+class InvitationAccept(RequestModel):
     token: Annotated[str, Field(min_length=1, max_length=200)]

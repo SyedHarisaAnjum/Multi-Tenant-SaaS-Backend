@@ -52,10 +52,31 @@ The refresh cookie is `SameSite=Strict` and scoped to `/api/v1/auth`, so browser
 - Admins can only invite (and revoke invitations for) roles below admin. The owner role can never be invited.
 - **Until email sending exists**, the create endpoint returns the raw token once so it can be shared out-of-band.
 
+## Errors and logging
+
+- Clients only ever get `{"error": {code, message, request_id}}`. Stack traces, SQL, constraint names and submitted values (including passwords in validation errors) are never returned. They go to the logs, tagged with the request id.
+- A client-supplied `X-Request-ID` is accepted only if it matches `[A-Za-z0-9._-]{1,64}` (this prevents log injection). Otherwise a fresh id is generated.
+
+## Tenant scope in request bodies
+
+Request bodies reject unknown fields (422), so a client cannot submit an `organization_id`. The tenant always comes from the URL (verified membership) or the stored resource. References in bodies are checked against the caller's organization:
+- `workspace_id`: a workspace in another organization looks the same as a missing one.
+- `assignee_id`: must be an active member.
+
+## Caching
+
+- Only responses that are identical for every member are cached, and authorization runs *before* the cache lookup. A removed member's token never reaches a cached page.
+- Keys always include the organization id. If a future response depends on the caller's role or identity, include that in the key or don't cache it.
+
+## Rate limiting
+
+See [architecture.md](architecture.md#rate-limiting-appcorerate_limitpy). Limits are per IP, per account and per user or organization, so neither a shared IP nor a distributed attacker can get around them alone. Login attempts count whether or not they succeed, so a correct guess after the limit is still refused.
+
 ### Known limitations / TODO
 
 - Access tokens stay valid until expiry after logout (≤15 min). Add a deny-list only if needed.
-- No rate limiting on `/login`, `/register` or `/invitations/accept` yet. Add it before going public.
+- Fixed-window limits allow a burst of up to 2x the limit across a window boundary. Switch to a sliding window if that matters.
+- Per-account login limits let an attacker lock a known account out for 15 minutes (the usual trade-off). Consider CAPTCHA or step-up checks instead of hard blocks later.
 - **No email verification yet.** Invitation acceptance trusts the account's email, so someone could register an invitee's address first. They would still need the invitation token, which is sent to that inbox. Add email verification before relying on this in production.
 - Set `COOKIE_SECURE=true` (the default) everywhere except local http development.
 - Configure CORS explicitly when the frontend is added (credentials + an exact allowed origin).

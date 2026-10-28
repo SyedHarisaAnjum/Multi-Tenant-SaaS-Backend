@@ -1,8 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Response, status
+from fastapi import APIRouter, Cookie, Request, Response, status
 
+from app.core import rate_limit
 from app.core.config import get_settings
+from app.core.rate_limit import Limiter, client_ip
 from app.dependencies.auth import CurrentUser, DbSession
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserRead
 from app.services.auth_service import AuthService, IssuedTokens
@@ -45,20 +47,32 @@ def _token_response(response: Response, tokens: IssuedTokens) -> TokenResponse:
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def register(data: RegisterRequest, db: DbSession) -> UserRead:
+def register(data: RegisterRequest, request: Request, limiter: Limiter, db: DbSession) -> UserRead:
+    limiter.hit(rate_limit.REGISTER_PER_IP, client_ip(request))
     user = AuthService(db).register(data)
     return UserRead.model_validate(user)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: LoginRequest, response: Response, db: DbSession) -> TokenResponse:
+def login(
+    data: LoginRequest, request: Request, response: Response, limiter: Limiter, db: DbSession
+) -> TokenResponse:
+    # Two dimensions: one IP can't spray many accounts, and many IPs can't
+    # brute-force one account.
+    limiter.hit(rate_limit.LOGIN_PER_IP, client_ip(request))
+    limiter.hit(rate_limit.LOGIN_PER_ACCOUNT, data.email)
     return _token_response(response, AuthService(db).login(data))
 
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh(
-    response: Response, db: DbSession, refresh_token: RefreshCookie = None
+    request: Request,
+    response: Response,
+    limiter: Limiter,
+    db: DbSession,
+    refresh_token: RefreshCookie = None,
 ) -> TokenResponse:
+    limiter.hit(rate_limit.REFRESH_PER_IP, client_ip(request))
     return _token_response(response, AuthService(db).refresh(refresh_token))
 
 

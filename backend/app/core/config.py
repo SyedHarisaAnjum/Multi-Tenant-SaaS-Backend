@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = Field(default=7, gt=0, le=90)
     invitation_expire_hours: int = Field(default=72, gt=0, le=24 * 30)
 
+    redis_url: str = "redis://127.0.0.1:6380/0"
+    test_redis_url: str | None = None
+    # Redis is an optimization: fail fast and fall back rather than stall requests.
+    redis_socket_timeout_seconds: float = 0.25
+    cache_ttl_seconds: int = Field(default=60, gt=0, le=3600)
+    rate_limit_enabled: bool = True
+
     cookie_secure: bool = True
     refresh_cookie_name: str = "refresh_token"
     refresh_cookie_path: str = "/api/v1/auth"

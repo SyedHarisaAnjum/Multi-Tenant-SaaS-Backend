@@ -40,6 +40,61 @@ Rules for new routes:
 
 People-management rules live in `app/core/permissions.py` (`ensure_can_manage`): you can only manage members ranked below you and only grant roles ranked below your own (owner > admin > member > viewer). Ownership moves only via `transfer-ownership`.
 
+## Request pipeline
+
+```
+RequestIdMiddleware (X-Request-ID, access log) -> router -> dependencies -> service -> repository
+exception handlers: one {"error": {code, message, request_id}} shape for AppError, validation,
+framework 404/405, IntegrityError (409), StaleDataError (409) and anything else (500)
+```
+
+- `app/core/exceptions.py`: error classes take an optional specific `code` (e.g. `PROJECT_NOT_FOUND`). Unexpected errors are logged with the stack trace and request id. The client only sees `INTERNAL_ERROR`.
+- `get_db` rolls back on any exception, so a failure half-way through a multi-step write (e.g. ownership transfer) leaves nothing behind.
+
+## Lists: pagination, filtering, sorting, search
+
+- `dependencies/pagination.py`: `Pagination` (`page >= 1`, `1 <= page_size <= 100`), `SortQuery`, `SearchQuery`.
+- `repositories/query_utils.py`:
+  - `apply_sort`: allowlist per resource, `-field` for descending, NULLs last, `id` tiebreaker for stable pages.
+  - `contains_ci`: ILIKE with `%` and `_` escaped.
+  - `paginate`: offset plus total count.
+- Repositories always start from `WHERE organization_id = :caller_org` and only then add filters, so counts and pages never include other tenants' rows.
+- Offset pagination is fine at this scale. Switch hot lists to keyset (cursor) pagination when deep pages or very large tenants appear.
+
+## Caching (`app/core/cache.py`)
+
+Cached: workspace list, project list and organization summary. These responses are identical for every member, and the route verifies membership *before* reading the cache.
+
+- Key: `org:{org_id}:{namespace}:g{generation}:page:{p}:size:{s}:{hash of other params}`, TTL 60 s.
+- Writes commit first, then `INCR` the namespace's generation, which orphans every old page at once. Readers read the generation *before* querying, so a reader racing a writer can only populate a key that nobody will read again.
+- Invalidation after commit can be lost if the process dies in between. The TTL bounds that staleness. A transactional outbox is the upgrade path if that's ever not acceptable.
+- If Redis is down, every cache call is a miss (logged) and reads go to PostgreSQL. Redis is then skipped for 5 s, so requests don't each wait for a timeout.
+
+## Rate limiting (`app/core/rate_limit.py`)
+
+Fixed-window counters in Redis (atomic Lua `INCR` + `EXPIRE`), applied per dimension:
+
+| Endpoint | Dimensions (limit / window) |
+| --- | --- |
+| login | IP (30 / 5 min), account email (10 / 15 min) |
+| register | IP (10 / h) |
+| refresh | IP (60 / min) |
+| create invitation | user (30 / h), organization (200 / day) |
+| accept invitation | user (10 / 15 min) |
+
+Over the limit, the endpoint returns 429 `RATE_LIMITED` with `Retry-After`. Identifiers are hashed in keys. If Redis is down the limiter fails open (logged); construct it with `fail_open=False` to fail closed. Password recovery doesn't exist yet; when added, it needs IP and account limits like login.
+
+## Concurrency (`tests/concurrency/`)
+
+| Situation | Protection |
+| --- | --- |
+| Two requests claim the same slug | unique index; `IntegrityError` becomes 409 with the domain code |
+| Same invitation accepted twice | `SELECT ... FOR UPDATE` on the invitation |
+| Two people edit the same task or project | `version` column (`version_id_col`): `UPDATE ... WHERE version = :read` |
+| A task is assigned while the assignee is being removed | assignment holds `FOR SHARE` on the membership; removal's `FOR UPDATE` waits, then unassigns |
+| Ownership transfer fails midway | single transaction + rollback; DB allows only one owner |
+| Workspace deleted while a project is added | row lock on the workspace + `ON DELETE RESTRICT` FK |
+
 ## Testing
 
 - `tests/conftest.py` downgrades and upgrades the test DB through Alembic at session start, so every run proves the schema builds from migrations alone.
@@ -48,3 +103,5 @@ People-management rules live in `app/core/permissions.py` (`ensure_can_manage`):
 - The `tenants` fixture (conftest) builds Acme with one user per role, plus Globex owned by an outsider.
 - `tests/security/test_tenant_isolation.py` mounts probe routes that use the real `Accessible*` dependencies, so cross-tenant project and task access is tested before those APIs exist.
 - Tests swap in cheap Argon2 parameters; production parameters are unchanged.
+- Tests use Redis DB 15 (`TEST_REDIS_URL`), flushed before each test. Rate limiting is off by default and re-enabled by the `limited` fixture in `tests/security/test_rate_limits.py`.
+- `tests/concurrency/` runs real parallel requests on separate connections with real commits. Thread barriers force the race, and the tables are truncated afterwards.

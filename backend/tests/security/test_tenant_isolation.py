@@ -116,7 +116,8 @@ def test_outsider_and_nonexistent_org_are_indistinguishable(
     real = client.get(f"{ORGS}/{tenants.acme}", headers=tenants.mallory.headers)
     fake = client.get(f"{ORGS}/{uuid.uuid4()}", headers=tenants.mallory.headers)
     assert real.status_code == fake.status_code == 404
-    assert real.json() == fake.json()
+    assert real.json()["error"]["code"] == fake.json()["error"]["code"]
+    assert real.json()["error"]["message"] == fake.json()["error"]["message"]
 
 
 def test_outsider_cannot_remove_members(client: TestClient, db: Session, tenants: Tenants) -> None:

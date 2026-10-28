@@ -2,11 +2,13 @@ import uuid
 
 from sqlalchemy.orm import Session
 
+from app.core import cache
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.core.permissions import ensure_can_manage
 from app.db.models import Membership, MembershipRole, User
 from app.repositories.activity_log_repository import ActivityLogRepository
 from app.repositories.membership_repository import MembershipRepository
+from app.repositories.task_repository import TaskRepository
 
 
 class MembershipService:
@@ -22,7 +24,9 @@ class MembershipService:
         self, actor: Membership, target_user_id: uuid.UUID, new_role: MembershipRole
     ) -> Membership:
         if target_user_id == actor.user_id:
-            raise PermissionDeniedError("You can't change your own role.")
+            raise PermissionDeniedError(
+                "You can't change your own role.", code="CANNOT_CHANGE_OWN_ROLE"
+            )
         target = self._get_target_for_update(actor, target_user_id)
         ensure_can_manage(actor, target.role)  # can't touch peers or superiors
         ensure_can_manage(actor, new_role)  # can't grant your own level or above
@@ -46,25 +50,37 @@ class MembershipService:
         """Remove a member, or leave the organization when target is the actor."""
         target = self._get_target_for_update(actor, target_user_id)
         if target.role is MembershipRole.OWNER:
-            raise PermissionDeniedError("The owner can't be removed. Transfer ownership first.")
+            raise PermissionDeniedError(
+                "The owner can't be removed. Transfer ownership first.",
+                code="OWNER_CANNOT_BE_REMOVED",
+            )
         leaving = target.user_id == actor.user_id
         if not leaving:
             ensure_can_manage(actor, target.role)
 
+        # One transaction: the membership goes and so do the member's task assignments
+        # in this organization. (Our FOR UPDATE on the membership row waits for any
+        # in-flight assignment holding FOR SHARE, so the unassign below sees it.)
+        self.memberships.delete(target)
+        unassigned = TaskRepository(self.db).unassign_member(actor.organization_id, target_user_id)
         self.activity.record(
             organization_id=actor.organization_id,
             actor_id=actor.user_id,
             action="member.left" if leaving else "member.removed",
             entity_type="membership",
             entity_id=target.id,
-            details={"user_id": str(target_user_id), "role": target.role.value},
+            details={
+                "user_id": str(target_user_id),
+                "role": target.role.value,
+                "tasks_unassigned": unassigned,
+            },
         )
-        self.memberships.delete(target)
         self.db.commit()
+        cache.get_cache().invalidate(actor.organization_id, cache.SUMMARY)
 
     def transfer_ownership(self, actor: Membership, new_owner_user_id: uuid.UUID) -> None:
         if new_owner_user_id == actor.user_id:
-            raise ConflictError("You already own this organization.")
+            raise ConflictError("You already own this organization.", code="ALREADY_OWNER")
         # Re-read the caller's row under lock: the role check must hold at commit time.
         current_owner = self.memberships.get_for_update(actor.organization_id, actor.user_id)
         if current_owner is None or current_owner.role is not MembershipRole.OWNER:
@@ -88,5 +104,5 @@ class MembershipService:
     def _get_target_for_update(self, actor: Membership, user_id: uuid.UUID) -> Membership:
         target = self.memberships.get_for_update(actor.organization_id, user_id)
         if target is None:
-            raise NotFoundError("Member not found.")
+            raise NotFoundError("Member not found.", code="MEMBER_NOT_FOUND")
         return target

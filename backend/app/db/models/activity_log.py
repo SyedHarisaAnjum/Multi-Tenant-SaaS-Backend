@@ -16,6 +16,7 @@ class ActivityLog(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         Index("ix_activity_logs_organization_id_created_at", "organization_id", "created_at"),
         Index("ix_activity_logs_entity", "entity_type", "entity_id"),
+        Index("ix_activity_logs_actor_id", "actor_id"),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(

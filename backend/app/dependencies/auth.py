@@ -25,11 +25,13 @@ def get_current_user(
     try:
         user_id = decode_access_token(credentials.credentials)
     except InvalidTokenError:
-        raise AuthenticationError("Invalid or expired access token.") from None
+        raise AuthenticationError(
+            "Invalid or expired access token.", code="INVALID_ACCESS_TOKEN"
+        ) from None
 
     user = UserRepository(db).get(user_id)
     if user is None or not user.is_active:
-        raise AuthenticationError("Invalid or expired access token.")
+        raise AuthenticationError("Invalid or expired access token.", code="INVALID_ACCESS_TOKEN")
     return user
 
 

@@ -38,7 +38,7 @@ def update_member_role(
     MembershipService(db).change_role(membership, user_id, data.role)
     row = MembershipRepository(db).get_with_user(membership.organization_id, user_id)
     if row is None:
-        raise NotFoundError("Member not found.")
+        raise NotFoundError("Member not found.", code="MEMBER_NOT_FOUND")
     return _member_read(*row)
 
 

@@ -9,6 +9,8 @@ from app.core.exceptions import PermissionDeniedError
 from app.db.models import Membership, MembershipRole
 
 MANAGER_ROLES = frozenset({MembershipRole.OWNER, MembershipRole.ADMIN})
+# Can create and edit work items (workspaces are managers-only); viewers are read-only.
+CONTRIBUTOR_ROLES = frozenset({MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MEMBER})
 
 
 def ensure_can_manage(actor: Membership, role: MembershipRole) -> None:

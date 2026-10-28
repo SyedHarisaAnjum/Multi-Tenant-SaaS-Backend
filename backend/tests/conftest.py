@@ -8,11 +8,14 @@ import pytest
 
 from app.core.config import Settings, get_settings
 
-# Point the app at the test database *before* anything creates an engine.
-_test_db_url = os.environ.get("TEST_DATABASE_URL") or Settings().test_database_url  # type: ignore[call-arg]
-if not _test_db_url:
-    raise RuntimeError("Set TEST_DATABASE_URL to run the test suite.")
+# Point the app at the test database and test Redis *before* anything connects.
+_settings = Settings()  # type: ignore[call-arg]
+_test_db_url = os.environ.get("TEST_DATABASE_URL") or _settings.test_database_url
+_test_redis_url = os.environ.get("TEST_REDIS_URL") or _settings.test_redis_url
+if not _test_db_url or not _test_redis_url:
+    raise RuntimeError("Set TEST_DATABASE_URL and TEST_REDIS_URL to run the test suite.")
 os.environ["DATABASE_URL"] = _test_db_url
+os.environ["REDIS_URL"] = _test_redis_url
 os.environ["ENVIRONMENT"] = "test"
 os.environ["COOKIE_SECURE"] = "false"  # TestClient talks plain http
 get_settings.cache_clear()
@@ -24,9 +27,18 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.core import security  # noqa: E402
+from app.core.rate_limit import RateLimiter, get_rate_limiter  # noqa: E402
+from app.core.redis import get_redis  # noqa: E402
 from app.db.session import engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
-from tests.helpers import Actor, add_member, create_actor, create_org  # noqa: E402
+from tests.helpers import (  # noqa: E402
+    Actor,
+    add_member,
+    create_actor,
+    create_org,
+    create_project,
+    create_workspace,
+)
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
@@ -42,6 +54,12 @@ def migrated_database() -> None:
     config.set_main_option("sqlalchemy.url", _test_db_url.replace("%", "%%"))
     command.downgrade(config, "base")
     command.upgrade(config, "head")
+
+
+@pytest.fixture(autouse=True)
+def clean_redis() -> None:
+    """The DB is rolled back per test; Redis isn't, so wipe the test Redis database."""
+    get_redis().flushdb()
 
 
 @pytest.fixture
@@ -69,7 +87,16 @@ def db() -> Iterator[Session]:
 
 @pytest.fixture
 def client(db: Session) -> Iterator[TestClient]:
-    app.dependency_overrides[get_db] = lambda: db
+    def override_get_db() -> Iterator[Session]:
+        try:
+            yield db
+        except Exception:
+            db.rollback()  # mirrors get_db; in this fixture it rolls back to the savepoint
+            raise
+
+    app.dependency_overrides[get_db] = override_get_db
+    # The suite registers hundreds of users from one IP; rate-limit tests opt back in.
+    app.dependency_overrides[get_rate_limiter] = lambda: RateLimiter(get_redis(), enabled=False)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -103,3 +130,23 @@ def tenants(client: TestClient) -> Tenants:
     globex = create_org(client, mallory, "globex")
 
     return Tenants(acme, owner, admin, member, viewer, globex, mallory)
+
+
+@dataclass(frozen=True)
+class Board:
+    workspace_id: str
+    project_id: str
+
+
+@pytest.fixture
+def acme_board(client: TestClient, tenants: Tenants) -> Board:
+    workspace = create_workspace(client, tenants.owner, tenants.acme, "engineering")
+    project = create_project(client, tenants.member, tenants.acme, workspace["id"], "Launch")
+    return Board(workspace_id=workspace["id"], project_id=project["id"])
+
+
+@pytest.fixture
+def globex_board(client: TestClient, tenants: Tenants) -> Board:
+    workspace = create_workspace(client, tenants.mallory, tenants.globex, "secret-lab")
+    project = create_project(client, tenants.mallory, tenants.globex, workspace["id"], "Secret")
+    return Board(workspace_id=workspace["id"], project_id=project["id"])

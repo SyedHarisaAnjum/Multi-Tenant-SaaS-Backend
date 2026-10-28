@@ -5,6 +5,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.db.models import MembershipRole
+from app.schemas.common import RequestModel
 
 OrganizationName = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
@@ -20,12 +21,12 @@ Slug = Annotated[
 ]
 
 
-class OrganizationCreate(BaseModel):
+class OrganizationCreate(RequestModel):
     name: OrganizationName
     slug: Slug
 
 
-class OrganizationUpdate(BaseModel):
+class OrganizationUpdate(RequestModel):
     name: OrganizationName | None = None
     slug: Slug | None = None
 
