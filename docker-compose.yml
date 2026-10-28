@@ -1,5 +1,26 @@
 name: teamflow
 
+# Full stack:   docker compose up --build        → http://localhost:8080
+# Infra only (backend/frontend run on the host for development):
+#               docker compose up -d db redis
+#
+# Start-up order is gated on readiness, not just "container started":
+#   db healthy → migrate exits 0 → backend healthy (/health reaches the DB) → frontend
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  # Inside the compose network services are addressed by name, not localhost.
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-teamflow}
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+  REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+  INVITATION_EXPIRE_HOURS: ${INVITATION_EXPIRE_HOURS:-72}
+  CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-60}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  # Secure cookies need HTTPS. Plain-http local runs set COOKIE_SECURE=false in .env.
+  COOKIE_SECURE: ${COOKIE_SECURE:-true}
+
 services:
   db:
     image: postgres:17-alpine
@@ -31,6 +52,49 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # One-off: bring the schema to head, then exit. The backend waits for success.
+  migrate:
+    build: ./backend
+    image: teamflow-backend:local
+    command: ["alembic", "upgrade", "head"]
+    environment: *backend-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build: ./backend
+    image: teamflow-backend:local
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+      # Trust X-Forwarded-For from any peer: safe ONLY because this service publishes no
+      # port, so nginx (which overwrites the header) is the only thing that can reach it.
+      FORWARDED_ALLOW_IPS: "*"
+    expose:
+      - "8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    image: teamflow-frontend:local
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # worker: background jobs (email delivery, cleanup) will go here later, built from
+  # ./backend with its own command and the same x-backend-env.
 
 volumes:
   pgdata:

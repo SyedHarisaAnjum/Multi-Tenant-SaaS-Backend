@@ -41,7 +41,7 @@ from tests.helpers import (
 
 
 @pytest.fixture
-def live() -> Iterator[TestClient]:
+def live(migrated_database: None, clean_redis: None) -> Iterator[TestClient]:
     """The real app with real sessions (no shared test transaction)."""
     app.dependency_overrides[get_rate_limiter] = lambda: RateLimiter(get_redis(), enabled=False)
     try:

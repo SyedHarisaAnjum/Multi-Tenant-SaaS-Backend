@@ -72,6 +72,13 @@ Request bodies reject unknown fields (422), so a client cannot submit an `organi
 
 See [architecture.md](architecture.md#rate-limiting-appcorerate_limitpy). Limits are per IP, per account and per user or organization, so neither a shared IP nor a distributed attacker can get around them alone. Login attempts count whether or not they succeed, so a correct guess after the limit is still refused.
 
+## Frontend and deployment
+
+- The access token is kept in memory only, never in localStorage. The refresh token stays in an HttpOnly, SameSite=Strict cookie scoped to `/api/v1/auth`. The SPA and API share one origin, so no CORS is configured at all.
+- The UI hides controls by role for usability only; the API enforces every rule.
+- `?next=` after login only accepts same-app paths (no open redirect).
+- nginx: CSP `default-src 'self'` (no inline scripts), `X-Frame-Options: DENY`, `nosniff`, a strict referrer policy and `server_tokens off`. It overwrites `X-Forwarded-For`, and the backend is not reachable except through nginx.
+
 ### Known limitations / TODO
 
 - Access tokens stay valid until expiry after logout (≤15 min). Add a deny-list only if needed.

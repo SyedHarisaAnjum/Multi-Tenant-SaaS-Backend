@@ -47,7 +47,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 security._password_hasher = PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def migrated_database() -> None:
     """Rebuild the schema from migrations alone, proving a clean DB can be created."""
     config = Config(str(BACKEND_DIR / "alembic.ini"))
@@ -56,14 +56,17 @@ def migrated_database() -> None:
     command.upgrade(config, "head")
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def clean_redis() -> None:
     """The DB is rolled back per test; Redis isn't, so wipe the test Redis database."""
     get_redis().flushdb()
 
 
+# Unit tests (tests/unit) use none of the fixtures below, so they run without
+# PostgreSQL or Redis. Anything touching the database pulls in the migrated schema
+# and a clean Redis through these dependencies.
 @pytest.fixture
-def db() -> Iterator[Session]:
+def db(migrated_database: None, clean_redis: None) -> Iterator[Session]:
     """Each test runs in an outer transaction that is rolled back afterwards.
 
     Code under test may call commit(); with create_savepoint those commits only

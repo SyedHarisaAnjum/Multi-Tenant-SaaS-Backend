@@ -4,46 +4,58 @@ Multi-tenant project and task management API: organizations → workspaces → p
 
 **Stack:** FastAPI · SQLAlchemy 2 · PostgreSQL 17 · Redis 7 · Alembic · Argon2id · JWT
 
-## Quick start (Windows / PowerShell)
+## Run everything with Docker
 
-Prerequisites: Python 3.10+ (3.12 recommended), Docker Desktop.
+Prerequisite: Docker Desktop.
 
 ```powershell
-# 1. Configure secrets (edit .env: set POSTGRES_PASSWORD, matching DATABASE_URLs, JWT_SECRET_KEY)
-Copy-Item .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(64))"   # paste as JWT_SECRET_KEY
-
-# 2. Start PostgreSQL (host port 5433, also creates teamflow_test) and Redis (port 6380)
-docker compose up -d --wait
-
-# 3. Install the backend
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".\backend[dev]"
-
-# 4. Create the schema and run the API
-cd backend
-alembic upgrade head
-uvicorn app.main:app --reload
+Copy-Item .env.example .env        # then set POSTGRES_PASSWORD (in both DATABASE_URLs) and JWT_SECRET_KEY
+python -c "import secrets; print(secrets.token_urlsafe(64))"   # a JWT_SECRET_KEY
+docker compose up --build
 ```
 
-Behind a reverse proxy, run uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy IP>` so per-IP rate limits see the real client address (and nobody else can spoof it).
+Open **http://localhost:8080**. API docs: http://localhost:8080/docs.
 
-- Health: http://127.0.0.1:8000/health
-- Interactive docs: http://127.0.0.1:8000/docs
+Start-up is gated on readiness: PostgreSQL healthy → a one-off `migrate` container runs `alembic upgrade head` and exits → backend healthy (its `/health` reaches the DB) → nginx frontend. The backend has no published port; nginx serves the React app and proxies `/api` on the same origin. For plain-http local use, `.env` sets `COOKIE_SECURE=false`. Keep it `true` behind HTTPS.
+
+## Develop on the host
+
+```powershell
+docker compose up -d db redis                  # PostgreSQL :5433 and Redis :6380 only
+
+py -3.12 -m venv .venv; .\.venv\Scripts\Activate.ps1
+pip install -e ".\backend[dev]"
+cd backend; alembic upgrade head; uvicorn app.main:app --reload     # API on :8000
+
+cd frontend; npm install; npm run dev          # UI on http://localhost:5173 (proxies /api to :8000)
+```
+
+Behind your own reverse proxy, run uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy IP>` and have the proxy *overwrite* `X-Forwarded-For`, so per-IP rate limits can't be spoofed.
 
 ## Development
 
-Run from `backend/`:
+Backend commands run from `backend/`:
 
 | Task | Command |
 | --- | --- |
-| Tests (rebuilds the test DB from migrations; needs Postgres + Redis running) | `pytest` |
-| Only the real-concurrency race tests | `pytest tests/concurrency -v` |
+| All tests + coverage (fails under 80%; needs Postgres + Redis) | `pytest --cov=app --cov-report=term-missing` |
+| Unit tests only (no services needed, under 1 s) | `pytest tests/unit` |
+| Real-concurrency race tests | `pytest tests/concurrency -v` |
 | Lint / format | `ruff check .` / `ruff format .` |
 | Type check | `mypy app` |
 | New migration | `alembic revision --autogenerate -m "describe change"` (then **review it**) |
 | Apply migrations | `alembic upgrade head` |
+
+Frontend commands run from `frontend/`: `npm run dev`, `npm run typecheck`, `npm run build`.
+
+### Test layout
+
+| Folder | What | Needs |
+| --- | --- | --- |
+| `tests/unit` | role matrix, status transitions, invitation expiry, update rules, pagination/sort/search, security helpers | nothing |
+| `tests/integration` | API + DB: auth, orgs, members, invitations, workspaces, projects, tasks, cache, errors, constraints, migrations (schema matches models; every revision down/up) | Postgres, Redis |
+| `tests/security` | tenant isolation, a permission matrix of every role × sensitive action, "rejected **and** data unchanged" checks, rate limits | Postgres, Redis |
+| `tests/concurrency` | real parallel requests with thread barriers (slug race, double accept, lost update, assign vs. remove, failed transfer) | Postgres, Redis |
 
 ## API (v1)
 

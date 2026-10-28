@@ -17,6 +17,22 @@ from app.repositories.user_repository import UserRepository
 from app.schemas.invitations import InvitationCreate
 
 
+def ensure_invitation_usable(invitation: Invitation, email: str, now: datetime) -> None:
+    """Raise unless `email` may accept `invitation` at `now`. Pure: no database access."""
+    # Check identity before revealing anything about the invitation's state.
+    if invitation.email != email:
+        raise PermissionDeniedError(
+            "This invitation was sent to a different email address.",
+            code="INVITATION_EMAIL_MISMATCH",
+        )
+    if invitation.revoked_at is not None:
+        raise GoneError("This invitation has been revoked.", code="INVITATION_REVOKED")
+    if invitation.accepted_at is not None:
+        raise GoneError("This invitation has already been used.", code="INVITATION_ALREADY_USED")
+    if invitation.expires_at <= now:
+        raise GoneError("This invitation has expired.", code="INVITATION_EXPIRED")
+
+
 class InvitationService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -92,21 +108,8 @@ class InvitationService:
         invitation = self.invitations.get_by_hash_for_update(security.hash_opaque_token(raw_token))
         if invitation is None:
             raise NotFoundError("Invitation not found.", code="INVITATION_NOT_FOUND")
-        # Check identity before revealing anything about the invitation's state.
-        if invitation.email != user.email:
-            raise PermissionDeniedError(
-                "This invitation was sent to a different email address.",
-                code="INVITATION_EMAIL_MISMATCH",
-            )
-        if invitation.revoked_at is not None:
-            raise GoneError("This invitation has been revoked.", code="INVITATION_REVOKED")
-        if invitation.accepted_at is not None:
-            raise GoneError(
-                "This invitation has already been used.", code="INVITATION_ALREADY_USED"
-            )
         now = datetime.now(timezone.utc)
-        if invitation.expires_at <= now:
-            raise GoneError("This invitation has expired.", code="INVITATION_EXPIRED")
+        ensure_invitation_usable(invitation, user.email, now)
         if self.memberships.get(invitation.organization_id, user.id):
             raise ConflictError(
                 "You are already a member of this organization.", code="ALREADY_MEMBER"

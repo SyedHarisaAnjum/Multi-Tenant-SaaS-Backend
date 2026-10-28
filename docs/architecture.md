@@ -95,6 +95,28 @@ Over the limit, the endpoint returns 429 `RATE_LIMITED` with `Retry-After`. Iden
 | Ownership transfer fails midway | single transaction + rollback; DB allows only one owner |
 | Workspace deleted while a project is added | row lock on the workspace + `ON DELETE RESTRICT` FK |
 
+## Frontend (`frontend/`)
+
+React 19 + TypeScript (strict) + Vite, React Router for routing and TanStack Query for server state. There is no client-side copy of the data model: each page reads through query keys (`["projects", orgId, filters]`, `["task", id]`, ...), and mutations invalidate the keys they affect.
+
+- **Routing:** the selected organization lives in the URL (`/orgs/:orgId/...`), so reloads and shared links keep context. List filters live in query params too.
+- **Auth:** the access token is kept in memory only. On load, and on any 401, the client calls `/auth/refresh` with the HttpOnly cookie. Refreshes are serialized within a tab (shared promise) and across tabs (Web Locks API), because rotating refresh tokens plus reuse detection would otherwise log users out when two tabs refresh at once. If a refresh fails, the session is over: cached data is cleared and the user is sent to `/login?next=...` with a "session expired" notice.
+- **Authorization stays in the backend.** Role checks in the UI (`can(role)`) only decide which controls to show. Every action is enforced server-side regardless.
+- **Optimistic locking in the UI:** edit forms send only changed fields plus `version`. A `VERSION_CONFLICT` offers "Load latest version" instead of overwriting.
+- Every data view has loading, empty and error states. Errors show the server's message and request id.
+
+## Containers (`docker-compose.yml`)
+
+| Service | Image | Readiness |
+| --- | --- | --- |
+| db | postgres:17-alpine, named volume `pgdata` | `pg_isready` |
+| redis | redis:7.4-alpine (no persistence, 128 MB cap) | `redis-cli ping` |
+| migrate | backend image, `alembic upgrade head`, exits | backend waits for `service_completed_successfully` |
+| backend | python:3.12-slim, non-root, no published port | `/health` (includes a DB round-trip) |
+| frontend | nginx serving the built SPA, proxying `/api`, `/health`, `/docs` | `/healthz` |
+
+Images contain no secrets. Everything comes from environment variables at runtime (`JWT_SECRET_KEY` is required, and compose refuses to start without it). nginx overwrites `X-Forwarded-For` with the real peer address, and only then does the backend trust it (`FORWARDED_ALLOW_IPS=*` is safe solely because nginx is the only route to the backend). The SPA is served with a strict Content-Security-Policy, and fingerprinted assets are cached as immutable.
+
 ## Testing
 
 - `tests/conftest.py` downgrades and upgrades the test DB through Alembic at session start, so every run proves the schema builds from migrations alone.
